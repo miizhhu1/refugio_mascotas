@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.auth0.jwt.interfaces.DecodedJWT;
 import com.krakedev.refugio_mascotas.entidades.Usuario;
 import com.krakedev.refugio_mascotas.repositories.UsuarioRepository;
+import com.krakedev.refugio_mascotas.services.TokenBlackListService;
 import com.krakedev.refugio_mascotas.services.UsuarioService;
 import com.krakedev.refugio_mascotas.utils.JwtUtil;
 
@@ -22,11 +23,14 @@ import com.krakedev.refugio_mascotas.utils.JwtUtil;
 public class AuthController {
 	private final UsuarioService usuarioService;
 	private final UsuarioRepository usuarioRepository;
+	private final TokenBlackListService blackListService;
 
-	public AuthController(UsuarioService usuarioService, UsuarioRepository usuarioRepository) {
+	public AuthController(UsuarioService usuarioService, UsuarioRepository usuarioRepository,
+			TokenBlackListService blackListService) {
 		super();
 		this.usuarioService = usuarioService;
 		this.usuarioRepository = usuarioRepository;
+		this.blackListService = blackListService;
 	}
 
 	// registrar usuario
@@ -64,36 +68,52 @@ public class AuthController {
 
 	// entrada a un perfil
 	@GetMapping("/perfil")
-	public ResponseEntity<?> perfil(
-	        @RequestHeader(value = "Authorization", required = false) String authHeader) {
+	public ResponseEntity<?> perfil(@RequestHeader(value = "Authorization", required = false) String authHeader) {
 
-	    // 1. Verificar que exista la cabecera Authorization
-	    if (authHeader == null || !authHeader.startsWith("Bearer ")) {
-	        return ResponseEntity.status(401)
-	                .body("Token no proporcionado o formato incorrecto");
-	    }
+		// 1. Verificar que exista la cabecera Authorization
+		if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+			return ResponseEntity.status(401).body("Token no proporcionado o formato incorrecto");
+		}
 
-	    // 2. Extraer el token eliminando la palabra Bearer
-	    String token = authHeader.substring(7);
+		// 2. Extraer el token eliminando la palabra Bearer
+		String token = authHeader.substring(7);
+		
+		 //Verificar si el token fue invalidado
+		 if (blackListService.estaInvalidado(token)) {
+		     return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+		             .body("Acceso denegado: la sesión fue cerrada");
+		 }
 
-	    // 3. Validar el token
-	    DecodedJWT datosToken = JwtUtil.validarToken(token);
+		// Validar el token
+		DecodedJWT datosToken = JwtUtil.validarToken(token);
 
-	    if (datosToken == null) {
-	        return ResponseEntity.status(401)
-	                .body("Token inválido o expirado");
-	    }
+		if (datosToken == null) {
+			return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+		            .body("Token inválido o expirado");
+		}
 
-	    // 4. Obtener los datos del token
-	    String usuario = datosToken.getSubject();
-	    String rol = datosToken.getClaim("rol").asString();
+		// Obtener los datos del token
+		String usuario = datosToken.getSubject();
+		String rol = datosToken.getClaim("rol").asString();
 
-	    // 5. Crear un saludo según el rol
-	    return ResponseEntity.ok(Map.of(
-				"Mensaje", "Bienvenido al sistema protegido por jwt:",
-				"Usuario: ", usuario,
-				"Rol: ", rol,
-				"Estatus", "Auntenticad existoso"));
+		// Crear un saludo según el rol
+		return ResponseEntity.ok(Map.of("Mensaje", "Bienvenido al sistema protegido por jwt:", "Usuario: ", usuario,
+				"Rol: ", rol, "Estatus", "Auntenticad existoso"));
+	}
+
+	@PostMapping("/logout")
+	public ResponseEntity<?> logout(@RequestHeader(value = "Authorization", required = false) String authHeader) {
+		if (authHeader != null &&  authHeader.startsWith("Bearer ")) {
+			String token = authHeader.substring(7);
+
+			// invalidamos token
+			blackListService.invalidarToken(token);
+
+			return ResponseEntity.ok(Map.of("Mensaje", "Sesión cerrada exitosamente. Token invalidado"));
+
+		} else {
+			return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Token no proporcionado");
+		}
 	}
 
 }
